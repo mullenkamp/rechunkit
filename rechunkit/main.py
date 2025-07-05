@@ -265,7 +265,7 @@ def calc_n_reads_simple(shape, source_chunk_shape, target_chunk_shape):
     return next(read_counter)
 
 
-def calc_n_reads_rechunker(shape: Tuple[int, ...], dtype: np.dtype, source_chunk_shape: Tuple[int, ...], target_chunk_shape: Tuple[int, ...], max_mem: int, sel=None) -> Tuple(int, int):
+def calc_n_reads_rechunker(shape: Tuple[int, ...], dtype: np.dtype, source_chunk_shape: Tuple[int, ...], target_chunk_shape: Tuple[int, ...], max_mem: int, sel=None) -> Tuple[int, int]:
     """
     This function takes a source dataset function with a specific chunk_shape and returns a generator that converts to a new chunk_shape. It optimises the rechunking by using an intermediate numpy ndarray with a size defined by the max_mem provided by the user.
 
