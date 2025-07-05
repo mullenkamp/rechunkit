@@ -1,0 +1,58 @@
+site_name: rechunkit
+site_description: Functions to efficiently rechunk multidimensional arrays
+
+repo_url: https://github.com/mullenkamp/rechunkit
+repo_name: mullenkamp/rechunkit
+
+theme:
+    name: material
+    icon:
+        logo: material/library
+    palette:
+        # Palette toggle for light mode
+        - media: "(prefers-color-scheme: light)"
+          scheme: default
+          primary: blue
+          accent: teal
+          toggle:
+            icon: material/brightness-7
+            name: Switch to dark mode
+
+        # Palette toggle for dark mode
+        - media: "(prefers-color-scheme: dark)"
+          scheme: slate
+          primary: blue
+          accent: teal
+          toggle:
+            icon: material/brightness-4
+            name: Switch to light mode
+
+markdown_extensions:
+    - toc:
+        permalink: true
+    - pymdownx.highlight:
+        anchor_linenums: true
+    - pymdownx.tasklist:
+        custom_checkbox: true
+    - pymdownx.inlinehilite
+    - pymdownx.snippets
+    - pymdownx.superfences
+
+plugins:
+    - search
+    - mkdocstrings:
+        handlers:
+            python:
+                import:
+                    - https://docs.python.org/3.11/objects.inv
+                options:
+                    docstring_style: google
+
+watch:
+    - docs
+    - rechunkit
+
+nav:
+    - About: index.md
+    - Reference:
+        - rechunkit: reference/rechunkit.md
