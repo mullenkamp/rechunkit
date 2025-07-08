@@ -24,7 +24,7 @@ pip install rechunkit
 I can add it to conda-forge if there is demand.
 
 ## Usage
-Import the necessary modules and assign some parameters:
+Import the necessary modules and assign some parameters for the examples:
 
 ```python
 from rechunkit import guess_chunk_shape, chunk_range, calc_ideal_read_chunk_shape, calc_ideal_read_chunk_mem, calc_source_read_chunk_shape, calc_n_chunks, calc_n_reads_simple, calc_n_reads_rechunker, rechunker
