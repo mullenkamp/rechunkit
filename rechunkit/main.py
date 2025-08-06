@@ -6,6 +6,7 @@ import itertools
 # from time import time
 from math import prod, lcm, ceil
 from collections import Counter, deque
+from collections.abc import Callable
 from itertools import count
 from bisect import bisect
 
@@ -270,7 +271,7 @@ def calc_n_reads_simple(shape, source_chunk_shape, target_chunk_shape):
     return next(read_counter)
 
 
-def calc_n_reads_rechunker(shape: Tuple[int, ...], dtype: np.dtype, source_chunk_shape: Tuple[int, ...], target_chunk_shape: Tuple[int, ...], max_mem: int, sel=None) -> Tuple[int, int]:
+def calc_n_reads_rechunker(shape: Tuple[int, ...], dtype: np.dtype, itemsize: int,  source_chunk_shape: Tuple[int, ...], target_chunk_shape: Tuple[int, ...], max_mem: int, sel=None) -> Tuple[int, int]:
     """
     This function calculates the total number of reads (aand writes) using the more optimized rechunking algorithm. It optimises the rechunking by using an in-memory numpy ndarray with a size defined by the max_mem provided by the user.
 
@@ -282,6 +283,8 @@ def calc_n_reads_rechunker(shape: Tuple[int, ...], dtype: np.dtype, source_chunk
         The shape of the source dataset, which will also be the shape of the target dataset.
     dtype: np.dtype
         The numpy data type of the source/target.
+    itemsize: int
+        The byte length of the data type.
     source_chunk_shape: tuple of ints
         The chunk_shape of the source.
     target_chunk_shape: tuple of ints
@@ -296,8 +299,6 @@ def calc_n_reads_rechunker(shape: Tuple[int, ...], dtype: np.dtype, source_chunk
     tuple
         number of reads, number of writes
     """
-    itemsize = dtype.itemsize
-
     ## Calc the optimum read_chunk_shape
     source_read_chunk_shape = calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsize, max_mem)
 
@@ -371,7 +372,7 @@ def calc_n_reads_rechunker(shape: Tuple[int, ...], dtype: np.dtype, source_chunk
     return next(read_counter), next(write_counter)
 
 
-def rechunker(source: object, shape: Tuple[int, ...], dtype: np.dtype, source_chunk_shape: Tuple[int, ...], target_chunk_shape: Tuple[int, ...], max_mem: int, sel=None) -> Iterator[Tuple[Tuple[slice, ...], np.ndarray]]:
+def rechunker(source: Callable, shape: Tuple[int, ...], dtype: np.dtype, itemsize: int, source_chunk_shape: Tuple[int, ...], target_chunk_shape: Tuple[int, ...], max_mem: int, sel=None) -> Iterator[Tuple[Tuple[slice, ...], np.ndarray]]:
     """
     This function takes a source dataset function with a specific chunk_shape and returns a generator that converts to a new chunk_shape. It optimises the rechunking by using an in-memory numpy ndarray with a size defined by the max_mem provided by the user. 
 
@@ -383,6 +384,8 @@ def rechunker(source: object, shape: Tuple[int, ...], dtype: np.dtype, source_ch
         The shape of the source dataset, which will also be the shape of the target dataset unless sel is passed.
     dtype: np.dtype
         The numpy data type of the source/target.
+    itemsize: int
+        The byte length of the data type.
     source_chunk_shape: tuple of ints
         The chunk_shape of the source.
     target_chunk_shape: tuple of ints
@@ -397,8 +400,6 @@ def rechunker(source: object, shape: Tuple[int, ...], dtype: np.dtype, source_ch
     Generator
         tuple of the target slices to the np.ndarray of data
     """
-    itemsize = dtype.itemsize
-
     ## Calc the optimum read_chunk_shape
     source_read_chunk_shape = calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsize, max_mem)
 
