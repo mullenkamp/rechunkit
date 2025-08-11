@@ -19,7 +19,7 @@ composite_numbers = (1, 2, 4, 6, 12, 24, 36, 48, 60, 120, 180, 240, 360, 720, 84
 ### Functions
 
 
-def guess_chunk_shape(shape: Tuple[int, ...], dtype: np.dtype, target_chunk_size: int = 2**21) -> Tuple[int, ...]:
+def guess_chunk_shape(shape: Tuple[int, ...], itemsize: int, target_chunk_size: int = 2**21) -> Tuple[int, ...]:
     """
     Guess an appropriate chunk layout for a dataset, given its shape and
     the size of each element in bytes.  Will allocate chunks only as large
@@ -29,8 +29,8 @@ def guess_chunk_shape(shape: Tuple[int, ...], dtype: np.dtype, target_chunk_size
     ----------
     shape: tuple of ints
         Shape of the array.
-    dtype: np.dtype or str
-        The dtype of the array.
+    itemsize: int
+        The byte size of the data type. It must be a numpy bytes size: 1, 2, 4, or 8
     target_chunk_size: int
         The maximum size per chunk in bytes.
 
@@ -50,12 +50,9 @@ def guess_chunk_shape(shape: Tuple[int, ...], dtype: np.dtype, target_chunk_size
         if not np.all(np.isfinite(chunks)):
             raise ValueError("Illegal value in chunk tuple")
 
-        dtype = np.dtype(dtype)
-        typesize = dtype.itemsize
-
         idx = 0
         while True:
-            chunk_bytes = prod(chunks)*typesize
+            chunk_bytes = prod(chunks)*itemsize
 
             if (chunk_bytes < target_chunk_size or \
              abs(chunk_bytes - target_chunk_size)/target_chunk_size < 0.5):
