@@ -40,17 +40,17 @@ def test_calcs():
     assert ideal_read_chunk_mem > max_mem
 
     source_read_chunk_shape = calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, dtype.itemsize, max_mem)
-    
+
     n_chunks_source = calc_n_chunks(source_shape, source_chunk_shape)
     n_chunks_target = calc_n_chunks(source_shape, target_chunk_shape)
-    
+
     n_reads_simple = calc_n_reads_simple(source_shape, source_chunk_shape, target_chunk_shape)
-    
-    n_reads, n_writes = calc_n_reads_rechunker(source_shape, dtype, dtype.itemsize, source_chunk_shape, target_chunk_shape, max_mem)
+
+    n_reads, n_writes = calc_n_reads_rechunker(source_shape, dtype.itemsize, source_chunk_shape, target_chunk_shape, max_mem)
 
     assert n_reads < n_reads_simple and n_writes == n_chunks_target
-    
-    n_reads_sel, n_writes_sel = calc_n_reads_rechunker(source_shape, dtype, dtype.itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel)
+
+    n_reads_sel, n_writes_sel = calc_n_reads_rechunker(source_shape, dtype.itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel)
 
     assert n_reads_sel < n_reads and n_writes_sel < n_chunks_target
 
@@ -60,7 +60,7 @@ def test_rechunking_same_shape():
     for write_chunk, data in rechunker(source, source_shape, dtype, dtype.itemsize, source_chunk_shape, target_chunk_shape, max_mem):
         # print(write_chunk)
         target[write_chunk] = data
-    
+
     assert np.all(source(()) == target)
 
 
@@ -69,7 +69,7 @@ def test_rechunking_selection():
     for write_chunk, data in rechunker(source, source_shape, dtype, dtype.itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel):
         # print(write_chunk)
         target[write_chunk] = data
-    
+
     assert np.all(source(sel) == target)
 
 

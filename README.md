@@ -45,7 +45,7 @@ dtype = np.dtype('int32')
 We have defined our target_chunk_shape above, but rechunkit has a function to guess a good chunk shape given a user-defined amount of memory per chunk:
 
 ```python
-new_chunk_shape = guess_chunk_shape(source_shape, dtype, 400)
+new_chunk_shape = guess_chunk_shape(source_shape, dtype.itemsize, 400)
 ```
 
 Chunks will be assigned to the highest composite number within the target_chunk_size. Using composite numbers will benefit the rehunking process as there is a very high likelihood that the least common multiple (LCM) of two composite numbers will be significantly lower than the product of those two numbers. The LCM is used to determine the ideal chunk size for the rechunking process.

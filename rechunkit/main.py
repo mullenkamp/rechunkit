@@ -19,7 +19,7 @@ composite_numbers = (1, 2, 4, 6, 12, 24, 36, 48, 60, 120, 180, 240, 360, 720, 84
 ### Functions
 
 
-def guess_chunk_shape(shape: Tuple[int, ...], dtype: np.dtype, target_chunk_size: int = 2**21) -> Tuple[int, ...]:
+def guess_chunk_shape(shape: Tuple[int, ...], itemsize: int, target_chunk_size: int = 2**21) -> Tuple[int, ...]:
     """
     Guess an appropriate chunk layout for a dataset, given its shape and
     the size of each element in bytes.  Will allocate chunks only as large
@@ -29,8 +29,8 @@ def guess_chunk_shape(shape: Tuple[int, ...], dtype: np.dtype, target_chunk_size
     ----------
     shape: tuple of ints
         Shape of the array.
-    dtype: np.dtype or str
-        The dtype of the array.
+    itemsize: int
+        The byte size of the data type. It must be a numpy bytes size: 1, 2, 4, or 8
     target_chunk_size: int
         The maximum size per chunk in bytes.
 
@@ -50,12 +50,9 @@ def guess_chunk_shape(shape: Tuple[int, ...], dtype: np.dtype, target_chunk_size
         if not np.all(np.isfinite(chunks)):
             raise ValueError("Illegal value in chunk tuple")
 
-        dtype = np.dtype(dtype)
-        typesize = dtype.itemsize
-
         idx = 0
         while True:
-            chunk_bytes = prod(chunks)*typesize
+            chunk_bytes = prod(chunks)*itemsize
 
             if (chunk_bytes < target_chunk_size or \
              abs(chunk_bytes - target_chunk_size)/target_chunk_size < 0.5):
@@ -271,7 +268,7 @@ def calc_n_reads_simple(shape, source_chunk_shape, target_chunk_shape):
     return next(read_counter)
 
 
-def calc_n_reads_rechunker(shape: Tuple[int, ...], dtype: np.dtype, itemsize: int,  source_chunk_shape: Tuple[int, ...], target_chunk_shape: Tuple[int, ...], max_mem: int, sel=None) -> Tuple[int, int]:
+def calc_n_reads_rechunker(shape: Tuple[int, ...], itemsize: int,  source_chunk_shape: Tuple[int, ...], target_chunk_shape: Tuple[int, ...], max_mem: int, sel=None) -> Tuple[int, int]:
     """
     This function calculates the total number of reads (aand writes) using the more optimized rechunking algorithm. It optimises the rechunking by using an in-memory numpy ndarray with a size defined by the max_mem provided by the user.
 
@@ -281,8 +278,6 @@ def calc_n_reads_rechunker(shape: Tuple[int, ...], dtype: np.dtype, itemsize: in
         The source function to read the dataset/array. The function must have a single parameter input as a tuple of slices to retrieve an array chunk of data.
     shape: tuple of ints
         The shape of the source dataset, which will also be the shape of the target dataset.
-    dtype: np.dtype
-        The numpy data type of the source/target.
     itemsize: int
         The byte length of the data type.
     source_chunk_shape: tuple of ints
@@ -374,7 +369,7 @@ def calc_n_reads_rechunker(shape: Tuple[int, ...], dtype: np.dtype, itemsize: in
 
 def rechunker(source: Callable, shape: Tuple[int, ...], dtype: np.dtype, itemsize: int, source_chunk_shape: Tuple[int, ...], target_chunk_shape: Tuple[int, ...], max_mem: int, sel=None) -> Iterator[Tuple[Tuple[slice, ...], np.ndarray]]:
     """
-    This function takes a source dataset function with a specific chunk_shape and returns a generator that converts to a new chunk_shape. It optimises the rechunking by using an in-memory numpy ndarray with a size defined by the max_mem provided by the user. 
+    This function takes a source dataset function with a specific chunk_shape and returns a generator that converts to a new chunk_shape. It optimises the rechunking by using an in-memory numpy ndarray with a size defined by the max_mem provided by the user.
 
     Parameters
     ----------
