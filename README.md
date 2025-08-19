@@ -74,7 +74,7 @@ Using the simple brute force method requires one chunk to be read 4.4 times on a
 There's also a function to check the number of reads (and writes) using the optimized algorithm:
 
 ```python
-n_reads, n_writes = calc_n_reads_rechunker(source_shape, dtype, source_chunk_shape, target_chunk_shape, max_mem) # 2044, 616
+n_reads, n_writes = calc_n_reads_rechunker(source_shape, dtype.itemsize, source_chunk_shape, target_chunk_shape, max_mem) # 2044, 616
 ```
 
 In this case, we only require one chunk to be read 2.28 times on average. The more max_mem you give to the rechunker, the less reads per chunk is required (to a minium of 1 in the ideal case).
@@ -99,7 +99,7 @@ target = np.zeros(source_shape, dtype=dtype)
 We don't necessarily need the target as an array to be filled, because the rechunker function returns a generator that can be iterated over. The generator returns a tuple of slices (representing the target chunk) and the associated numpy array data:
 
 ```python
-for write_chunk, data in rechunker(source, source_shape, dtype, source_chunk_shape, target_chunk_shape, max_mem):
+for write_chunk, data in rechunker(source, source_shape, dtype, dtype.itemsize, source_chunk_shape, target_chunk_shape, max_mem):
         target[write_chunk] = data
     
 assert np.all(source(()) == target) # Should pass!
@@ -109,11 +109,11 @@ assert np.all(source(()) == target) # Should pass!
 There are many use-cases where you don't want the entire dataset. Rather you want a subset of the dataset, but you also want the subset rechunked. The rechunker function has a `sel` parameter which needs to be a tuple of slices of the number of dimensions.
 
 ```python
-n_reads, n_writes = calc_n_reads_rechunker(source_shape, dtype, source_chunk_shape, target_chunk_shape, max_mem, sel) # 288, 80
+n_reads, n_writes = calc_n_reads_rechunker(source_shape, dtype.itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel) # 288, 80
 
 target = np.zeros(source_shape, dtype=dtype)[sel]
 
-for write_chunk, data in rechunker(source, source_shape, dtype, source_chunk_shape, target_chunk_shape, max_mem, sel):
+for write_chunk, data in rechunker(source, source_shape, dtype, dtype.itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel):
     target[write_chunk] = data
 
 assert np.all(source(sel) == target) # Should pass!
