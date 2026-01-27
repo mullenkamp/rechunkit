@@ -192,6 +192,7 @@ def calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsiz
         tot_target = prod(new_chunks)
 
         if tot_target == tot_source:
+            # continue
             return source_chunk_shape
         else:
             if pos + 1 == source_len:
@@ -201,6 +202,10 @@ def calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsiz
 
     ## Min mem
     n_chunks_write = tuple(s//target_chunk_shape[i] for i, s in enumerate(new_chunks))
+
+    if prod(n_chunks_write) == 0:
+        raise ValueError('There is not enough memory allocated to perform the rechunking. Either allocate more memory or reduce the target_chunk_shape.')
+
     for i in range(len(new_chunks)):
         while True:
             n_chunk_write = n_chunks_write[i]
@@ -373,8 +378,8 @@ def rechunker(source: Callable, shape: Tuple[int, ...], dtype: np.dtype, itemsiz
 
     Parameters
     ----------
-    source: array-like
-        The source function to read the dataset/array. The function must have a single parameter input as a tuple of slices to retrieve an array chunk of data.
+    source: callable function/method
+        The source function/method to read the dataset/array. The function must have a single parameter input as a tuple of slices to retrieve an array chunk of data.
     shape: tuple of ints
         The shape of the source dataset, which will also be the shape of the target dataset unless sel is passed.
     dtype: np.dtype
