@@ -61,10 +61,10 @@ def guess_chunk_shape(shape: Tuple[int, ...], itemsize: int, target_chunk_size: 
             if prod(chunks) == 1:
                 break
 
-            chunks[idx%ndims] = ceil(chunks[idx%ndims] / 2.0)
+            chunks[idx%ndims] = composite_numbers[bisect(composite_numbers, int(chunks[idx%ndims] / 2.0) - 1)]
             idx += 1
 
-        return tuple(composite_numbers[bisect(composite_numbers, int(x)) - 1] for x in chunks)
+        return tuple(int(x) for x in chunks)
     else:
         return None
 
