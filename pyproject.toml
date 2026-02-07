@@ -22,6 +22,8 @@ dev = [
   "ruff",
   "pytest",
   "pytest-cov",
+  "pytest-benchmark>=5.2.3",
+  "matplotlib>=3.9.4",
 ]
 
 [tool.hatch]

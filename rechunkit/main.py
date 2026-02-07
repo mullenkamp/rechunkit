@@ -46,25 +46,32 @@ def guess_chunk_shape(shape: Tuple[int, ...], itemsize: int, target_chunk_size: 
         if not all(isinstance(v, int) for v in shape):
             raise TypeError('All values in the shape must be ints.')
 
-        chunks = np.array(shape, dtype='=f8')
-        if not np.all(np.isfinite(chunks)):
-            raise ValueError("Illegal value in chunk tuple")
-
+        chunks = list(shape)
+        
         idx = 0
         while True:
             chunk_bytes = prod(chunks)*itemsize
 
-            if (chunk_bytes < target_chunk_size or \
-             abs(chunk_bytes - target_chunk_size)/target_chunk_size < 0.5):
+            if chunk_bytes <= target_chunk_size * 1.5:
                 break
 
             if prod(chunks) == 1:
                 break
 
-            chunks[idx%ndims] = composite_numbers[bisect(composite_numbers, int(chunks[idx%ndims] / 2.0) - 1)]
+            # Find the largest composite number <= current_dim / 2
+            current_dim = chunks[idx % ndims]
+            search_val = (current_dim // 2) - 1
+            pos = bisect(composite_numbers, search_val)
+            
+            if pos == 0:
+                new_val = 1
+            else:
+                new_val = composite_numbers[pos - 1]
+            
+            chunks[idx % ndims] = new_val
             idx += 1
 
-        return tuple(int(x) for x in chunks)
+        return tuple(chunks)
     else:
         return ()
 
@@ -178,47 +185,73 @@ def calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsiz
     if tot_source >= max_cells:
         return source_chunk_shape
 
-    new_chunks = list(calc_ideal_read_chunk_shape(source_chunk_shape, target_chunk_shape))
+    # Calculate ideal (LCM) shape
+    ideal_chunks = calc_ideal_read_chunk_shape(source_chunk_shape, target_chunk_shape)
+    tot_ideal = prod(ideal_chunks)
 
-    ## Max mem
-    tot_target = prod(new_chunks)
-    pos = 0
-    while tot_target > max_cells:
-        prod_chunk = new_chunks[pos]
-        source_chunk = source_chunk_shape[pos]
-        if prod_chunk > source_chunk:
-            new_chunks[pos] = prod_chunk - source_chunk
+    if tot_ideal <= max_cells:
+        return ideal_chunks
 
-        tot_target = prod(new_chunks)
+    # If ideal doesn't fit, we need to find a multiple of source_chunk_shape
+    # that fits in max_mem and approximates the aspect ratio of ideal_chunks.
+    
+    # Calculate how many source chunks we can fit
+    capacity = max_cells // tot_source
+    if capacity < 1:
+        return source_chunk_shape # Should have been caught by tot_source >= max_cells
+    
+    # Calculate the scaling factor for each dimension from source to ideal
+    # ideal_chunks[i] = k_i * source_chunk_shape[i]
+    k_factors = [i // s for i, s in zip(ideal_chunks, source_chunk_shape)]
+    
+    # We want to find new factors n_i <= k_i such that prod(n_i) <= capacity
+    # To preserve aspect ratio, we want n_i proportional to k_i.
+    
+    total_k = prod(k_factors)
+    scale = (capacity / total_k) ** (1.0 / source_len)
+    
+    new_factors = [max(1, int(k * scale)) for k in k_factors]
+    
+    # Refine new_factors to ensure prod(new_factors) <= capacity
+    while prod(new_factors) > capacity:
+        # Shrink the largest factor > 1
+        idx = max(range(source_len), key=lambda i: new_factors[i])
+        new_factors[idx] = max(1, new_factors[idx] - 1)
 
-        if tot_target == tot_source:
-            # continue
-            return source_chunk_shape
+    # Grow to fill remaining capacity
+    while True:
+        candidates = [i for i in range(source_len) if new_factors[i] < k_factors[i]]
+        if not candidates:
+             break
+             
+        # Heuristic: Grow the one with largest (k/n) ratio (most compressed)
+        candidates.sort(key=lambda i: k_factors[i]/new_factors[i], reverse=True)
+        
+        grew = False
+        curr_prod = prod(new_factors)
+        for idx in candidates:
+             if curr_prod * (new_factors[idx] + 1) // new_factors[idx] <= capacity:
+                 new_factors[idx] += 1
+                 grew = True
+                 break # Re-evaluate from top
+        
+        if not grew:
+            break
+
+    # Trim waste: Reduce factors if they exceed what's needed for the target chunks covered
+    final_factors = []
+    for n, s, t in zip(new_factors, source_chunk_shape, target_chunk_shape):
+        m = (n * s) // t
+        if m == 0:
+            # Limit to covering 1 target chunk if possible
+            req_n = (t + s - 1) // s
+            final_factors.append(min(n, req_n))
         else:
-            if pos + 1 == source_len:
-                pos = 0
-            else:
-                pos += 1
+            # Limit to covering m target chunks
+            req_n = (m * t + s - 1) // s
+            final_factors.append(req_n)
 
-    ## Min mem
-    n_chunks_write = tuple(s//target_chunk_shape[i] for i, s in enumerate(new_chunks))
-
-    if prod(n_chunks_write) == 0:
-        raise ValueError('There is not enough memory allocated to perform the rechunking. Either allocate more memory or reduce the target_chunk_shape.')
-
-    for i in range(len(new_chunks)):
-        while True:
-            n_chunk_write = n_chunks_write[i]
-            prod_chunk = new_chunks[i]
-            source_chunk = source_chunk_shape[i]
-            target_chunk = target_chunk_shape[i]
-            new_chunk = prod_chunk - source_chunk
-            if new_chunk//target_chunk == n_chunk_write:
-                new_chunks[i] = new_chunk
-            else:
-                break
-
-    return tuple(new_chunks)
+    return tuple(f * s for f, s in zip(final_factors, source_chunk_shape))
 
 
 def calc_n_chunks_per_read(source_chunk_shape, source_read_chunk_shape):

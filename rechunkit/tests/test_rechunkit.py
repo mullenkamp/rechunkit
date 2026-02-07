@@ -231,7 +231,7 @@ def test_rechunker_always_fewer_reads_than_simple():
         ((50,), (7,), (11,), 100),
         ((17, 13), (5, 4), (3, 7), 200),
         ((24, 24), (6, 4), (4, 6), 300),
-        # ((11, 13, 7), (3, 5, 2), (4, 3, 5), 500),
+        ((11, 13, 7), (3, 5, 2), (4, 3, 5), 500),
     ]
     itemsize = 4
     for shp, src_c, tgt_c, mem in configs:
@@ -264,7 +264,7 @@ def test_more_mem_means_fewer_or_equal_reads():
     itemsize = 4
 
     prev_reads = None
-    for mem in [200, 500, 2000, 6000, 10000]:
+    for mem in [200, 500, 2000, 5000, 6000, 8000, 10000]:
         n_reads, _ = calc_n_reads_rechunker(shape, itemsize, src_c, tgt_c, mem)
         if prev_reads is not None:
             assert n_reads <= prev_reads, f"mem={mem}: reads {n_reads} > prev {prev_reads}"
