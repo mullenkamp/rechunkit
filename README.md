@@ -35,7 +35,7 @@ Rechunkit is a set of functions to allow efficient rechunking of multidimensiona
 - **Efficient On-the-Fly Rechunking:** Uses Python generators to yield rechunked data without requiring the full target array to be stored in memory.
 - **Memory-Aware Optimization:** Employs a smart scaling algorithm to maximize performance within a user-defined memory limit (`max_mem`).
 - **LCM Minimization:** Utilizes highly composite numbers for chunk guessing to minimize the Least Common Multiple (LCM) between source and target, significantly reducing redundant reads.
-- **Flexible Data Access:** Supports subset selection (`sel`) and works with any source that implements a numpy `__getitem__` style callable.
+- **Flexible Data Access:** Supports subset selection (`sel`) and works with any source that implements a numpy `__getitem__` style callable (method or function).
 - **Preprocessing Utilities:** Includes tools for estimating ideal chunk shapes, calculating memory requirements, and predicting the number of required read operations.
 
 ## Installation
@@ -144,7 +144,7 @@ assert np.all(source(sel) == target) # Should pass!
 ```
 
 ### Real-world Integration (h5py)
-In practice, you will likely be rechunking data from persistent storage formats like HDF5 or Zarr. Since `rechunkit` only requires a callable that implements `__getitem__`, it integrates seamlessly with these libraries.
+In practice, you will likely be rechunking data from persistent storage formats like HDF5 or Zarr. Since `rechunkit` only requires a callable that implements the numpy `__getitem__` style slicing and returns a numpy ndarray, it integrates seamlessly with these libraries.
 
 Example using `h5py`:
 
@@ -166,7 +166,7 @@ with h5py.File('source.h5', 'r') as f_src, h5py.File('target.h5', 'w') as f_tgt:
     
     # Rechunk on-the-fly
     for write_slices, data in rechunker(
-        source=dset_src.__getitem__,
+        source=dset_src.__getitem__, # Would be different for zarr
         shape=dset_src.shape,
         dtype=dset_src.dtype,
         source_chunk_shape=dset_src.chunks,
