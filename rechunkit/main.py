@@ -441,8 +441,22 @@ def rechunker(source: Callable, shape: Tuple[int, ...], dtype: np.dtype, source_
 
     if sel is None:
         chunk_read_offset = tuple(0 for i in range(len(shape)))
+        target_shape = shape
     else:
         chunk_read_offset = tuple(s.start for s in sel)
+        target_shape = tuple(s.stop - s.start for s in sel)
+
+    # For canonical yield ordering: compute strides for C-order target chunk index
+    n_chunks_per_dim = tuple(ceil(s / c) for s, c in zip(target_shape, target_chunk_shape))
+
+    def _canon_idx(chunk_slices):
+        idx = 0
+        for s, c, nc in zip(chunk_slices, target_chunk_shape, n_chunks_per_dim):
+            idx = idx * nc + (s.start // c)
+        return idx
+
+    pending = {}
+    next_idx = 0
 
     for group_type, read_chunks, write_chunks, group_start in _rechunk_plan(shape, itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel):
         if group_type == 'bulk':
@@ -453,7 +467,15 @@ def rechunker(source: Callable, shape: Tuple[int, ...], dtype: np.dtype, source_
 
             for write_chunk in write_chunks:
                 offset_slices = tuple(slice(wc.start - gs, wc.stop - gs) for gs, wc in zip(group_start, write_chunk))
-                yield write_chunk, mem_arr1[offset_slices]
+                idx = _canon_idx(write_chunk)
+                if idx == next_idx:
+                    yield write_chunk, mem_arr1[offset_slices]
+                    next_idx += 1
+                    while next_idx in pending:
+                        yield pending.pop(next_idx)
+                        next_idx += 1
+                else:
+                    pending[idx] = (write_chunk, mem_arr1[offset_slices].copy())
 
         else:  # single
             write_chunk = write_chunks[0]
@@ -465,7 +487,19 @@ def rechunker(source: Callable, shape: Tuple[int, ...], dtype: np.dtype, source_
                 write_slice = tuple(slice(cc.start - rc.start, cc.stop - rc.start) for cc, rc in zip(clip_read_chunk, write_chunk))
                 mem_arr1[write_slice] = source(read_chunk1)[read_slice]
 
-            yield write_chunk, mem_arr1[mem_read_chunk_slice]
+            idx = _canon_idx(write_chunk)
+            if idx == next_idx:
+                yield write_chunk, mem_arr1[mem_read_chunk_slice]
+                next_idx += 1
+                while next_idx in pending:
+                    yield pending.pop(next_idx)
+                    next_idx += 1
+            else:
+                pending[idx] = (write_chunk, mem_arr1[mem_read_chunk_slice].copy())
+
+    while next_idx in pending:
+        yield pending.pop(next_idx)
+        next_idx += 1
 
 
 
