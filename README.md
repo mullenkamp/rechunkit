@@ -4,7 +4,6 @@
     <em>Functions to efficiently rechunk multidimensional arrays</em>
 </p>
 
-[![build](https://github.com/mullenkamp/rechunkit/workflows/Build/badge.svg)](https://github.com/mullenkamp/rechunkit/actions)
 [![codecov](https://codecov.io/gh/mullenkamp/rechunkit/branch/master/graph/badge.svg)](https://codecov.io/gh/mullenkamp/rechunkit)
 [![PyPI version](https://badge.fury.io/py/rechunkit.svg)](https://badge.fury.io/py/rechunkit)
 
