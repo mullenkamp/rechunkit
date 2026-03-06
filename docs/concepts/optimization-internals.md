@@ -1,6 +1,6 @@
 # Optimization Internals
 
-This page documents the internal optimization strategies used by `calc_source_read_chunk_shape` and the trade-offs discovered during their development. It is intended as a reference for future contributors considering algorithmic improvements.
+This page documents optimization strategies that were explored for `calc_source_read_chunk_shape` and ultimately rejected. It is intended as a reference for future contributors considering algorithmic improvements, so the same explorations are not repeated.
 
 ## The Buffer Shape Problem
 
@@ -8,24 +8,23 @@ When the ideal LCM buffer doesn't fit in `max_mem`, rechunkit must choose a smal
 
 The choice of buffer shape has a significant impact on read count because of how the constrained path works: it iterates over target chunks, reads a buffer-sized region of source chunks, and serves all target chunks that fit within that region. A poorly chosen buffer shape can cross target chunk boundaries in ways that leave partial coverage, forcing re-reads when adjacent target chunks are processed.
 
-### Why the Greedy Heuristic is Suboptimal
+## Current Approach: Greedy Heuristic
 
-The original approach uses a greedy heuristic (`_greedy_read_chunk_factors`) that:
+The current implementation uses a greedy heuristic that:
 
 1. Computes the per-dimension scaling factor from source to ideal: `k_i = lcm_dim / source_dim`
 2. Scales all factors down uniformly to fit in memory: `n_i = floor(k_i * scale)`
 3. Greedily grows the most compressed dimension until capacity is exhausted
-4. Trims factors to snap to target chunk boundaries (`_trim_factors`)
 
-This works well in many cases, but the greedy growth order doesn't account for how the buffer aligns with the target chunk grid. A buffer of shape `(7, 15)` might cross more target boundaries than `(7, 9)` in a particular dimension, causing more read groups and redundant source reads.
+This works well in most cases. Benchmarking across ~60 constrained configurations showed the greedy heuristic was suboptimal in **13% of cases**, producing 1-4% more reads than the optimal buffer shape. These marginal losses were judged acceptable given the complexity required to do better (see below).
 
-Benchmarking across ~60 constrained configurations showed the greedy heuristic was suboptimal in **13% of cases**, producing 1-4% more reads than the optimal buffer shape.
+## Candidate Search (Explored and Rejected)
 
-## Current Optimization Strategy
+A candidate search optimization was fully implemented and benchmarked. It was reverted because the added complexity (~150 lines of code, 50-62 ms overhead for 3D cases) was not justified by the marginal gains (1-4% fewer reads in 13% of constrained cases).
 
-The current implementation uses a **candidate search** when the `shape` parameter is provided (which `rechunker()` and `calc_n_reads_rechunker()` do automatically):
+### How It Worked
 
-### Candidate Generation
+When the array `shape` was provided, `calc_source_read_chunk_shape` would:
 
 **Small search spaces** (`prod(k_factors) <= 500`): Exhaustively enumerate all valid factor combinations. For typical 2D arrays, this means 5-25 combinations. For 3D arrays with moderate LCM factors, up to a few hundred.
 
@@ -37,17 +36,18 @@ The current implementation uses a **candidate search** when the `shape` paramete
 - Perturbations of +/-1-2 per dimension around the greedy factors
 - Pairwise capacity shifts between dimensions (shrink one, grow another)
 
-This typically produces 10-30 unique candidate shapes after deduplication via `_trim_factors`.
+Each candidate was scored by `_count_reads()`, which mirrored the `_rechunk_plan` constrained-path logic exactly — iterating over all target chunks, simulating the bulk/single grouping, and counting source chunk reads. When there were more than 8 candidates, a fast analytical pre-filter narrowed the set before expensive scoring. The greedy shape was always included in the scored set to guarantee no regression.
 
-### Scoring
+### Why It Was Rejected
 
-Each candidate is scored by `_count_reads()`, which mirrors the `_rechunk_plan` constrained-path logic exactly — iterating over all target chunks, simulating the bulk/single grouping, and counting source chunk reads. This is the most expensive part of the optimization.
+1. **Marginal gains:** Only 13% of constrained configurations benefited, and only by 1-4% fewer reads.
+2. **Non-trivial overhead:** Scoring required `_count_reads` calls at O(n_write_chunks) each. For 3D arrays, this added 50-62 ms of planning time.
+3. **Fragile mirror code:** `_count_reads` had to exactly mirror `_rechunk_plan`'s constrained-path logic (including `include_partial_chunks`, `clip_ends`, and the `written_chunks` set). Any divergence caused incorrect scores. Maintaining this mirror across future changes to `_rechunk_plan` would be error-prone.
+4. **~150 lines of added complexity** for `_count_reads`, `_trim_factors`, `_greedy_read_chunk_factors`, candidate generation, pre-filtering, and scoring logic.
 
-When there are more than 8 candidates, a fast analytical pre-filter (`n_read_groups * source_chunks_per_group`) narrows the set before expensive scoring. The greedy shape is always included in the scored set to guarantee no regression.
+For real-world rechunking (reading chunks from disk or network at ~1 ms+ each), a 1-4% reduction in reads is typically a few saved I/O operations — dwarfed by the inherent variability of I/O latency.
 
-### Overhead
-
-The optimization adds zero overhead for ideal-path cases (LCM fits in memory) and early-exit cases (source chunk >= max_mem). For constrained cases, the overhead is dominated by `_count_reads` calls:
+### Overhead Measurements
 
 | Case | Typical overhead | Read improvement |
 |------|-----------------|-----------------|
@@ -55,11 +55,9 @@ The optimization adds zero overhead for ideal-path cases (LCM fits in memory) an
 | 2D constrained (3-7 candidates) | 2-7 ms | 1-2% fewer reads |
 | 3D constrained (8-31 candidates) | 50-62 ms | 0-3% fewer reads |
 
-For real-world rechunking operations (reading chunks from disk or network at ~1 ms+ each, with hundreds or thousands of chunks), this one-time planning overhead is negligible compared to I/O time.
+## Other Approaches Evaluated
 
-## Alternative Approaches Evaluated
-
-Several approaches were tried and rejected during development. They are documented here to avoid repeating the same explorations.
+Several alternative approaches were also tried and rejected. They are documented here to avoid repeating the same explorations.
 
 ### Fast Analytical Estimate Only
 
@@ -89,7 +87,7 @@ Used the fast estimate to pick the top-5 candidates, then scored them with `_cou
 
 **Result:** In some 3D cases, the greedy shape ranked outside the top-5 by fast estimate. Since none of the top-5 were actually better than greedy, the optimization picked a shape with significantly more reads (e.g., 2044 -> 3664 in one case — a 79% regression).
 
-**Verdict:** Dangerous without always including the greedy shape in the scored set. The current implementation fixes this by ensuring greedy_shape is always scored.
+**Verdict:** Dangerous without always including the greedy shape in the scored set.
 
 ### Rewriting _count_reads with Pure Arithmetic
 
@@ -97,19 +95,15 @@ Attempted to replace the generator-based `_count_reads` with direct index arithm
 
 **Result:** The rewritten version had subtle bugs — it didn't exactly mirror the `_rechunk_plan` bulk-grouping logic (off-by-one in which write chunks are considered "covered"). One test case showed 367 reads vs the correct 374. The constrained path's write-chunk coverage logic has several interacting conditions (`include_partial_chunks`, `clip_ends`, the `written_chunks` set), making it fragile to reimplement.
 
-**Verdict:** Not worth the risk. The original `_count_reads` that mirrors `_rechunk_plan` exactly is the only safe implementation. Performance improvements should focus on reducing the number of calls, not the per-call cost.
+**Verdict:** Not worth the risk. A `_count_reads` that mirrors `_rechunk_plan` exactly is the only safe implementation. Performance improvements should focus on reducing the number of calls, not the per-call cost.
 
 ## Future Improvement Opportunities
 
-### Monotonicity Guarantee
+If revisiting this optimization in the future, the key challenges to address are:
 
-The current implementation maintains monotonicity (more memory = fewer or equal reads) empirically across all tested configurations. However, there is no formal proof. The exhaustive search for small factor spaces (total_k <= 500) guarantees optimality within that space. For large factor spaces, the heuristic candidates may miss the true optimum.
+### Reducing Scoring Cost
 
-A formal monotonicity proof or a counterexample would be valuable.
-
-### Reducing _count_reads Cost
-
-`_count_reads` is O(n_write_chunks) per call, where `n_write_chunks = prod(ceil(shape[d] / target[d]))`. For large 3D arrays, this can be hundreds or thousands of iterations per candidate. Possible approaches:
+`_count_reads` is O(n_write_chunks) per call. For large 3D arrays, this can be hundreds or thousands of iterations per candidate. Possible approaches:
 
 - **Analytical formula for bulk grouping:** If the number of write chunks covered per read group could be computed analytically (without iterating), scoring would be O(n_read_groups) instead of O(n_write_chunks). The challenge is that coverage depends on alignment between the source grid, target grid, and buffer boundaries — which varies per read group.
 - **Caching across candidates:** Many candidates share the same structure in most dimensions. Partial results from one candidate could inform scoring of another.
@@ -117,11 +111,15 @@ A formal monotonicity proof or a counterexample would be valuable.
 
 ### Better Candidate Generation for Large Factor Spaces
 
-The heuristic candidates for `total_k > 500` are based on perturbations of the greedy shape. If the optimal shape is structurally very different from greedy (e.g., [2, 5, 3] vs greedy [4, 4, 3]), it may not be in the candidate set. More sophisticated generation strategies could help:
+The heuristic candidates for large search spaces are based on perturbations of the greedy shape. If the optimal shape is structurally very different from greedy (e.g., [2, 5, 3] vs greedy [4, 4, 3]), it may not be in the candidate set. More sophisticated generation strategies could help:
 
 - **Target-aligned search:** For each dimension, try all multiples of the target chunk size that fit, rather than perturbations of greedy.
 - **LCM-sub-multiple search:** Try shapes that are divisors of the LCM shape, as these align cleanly with both source and target grids.
 - **Adaptive expansion:** If the best candidate is at the edge of the search neighborhood, expand the search in that direction.
+
+### Monotonicity
+
+Any optimization must guarantee monotonicity (more memory = fewer or equal reads). The greedy heuristic currently maintains this empirically. The candidate search maintained it by always including the greedy shape as a fallback. A formal monotonicity proof would be valuable regardless of whether an optimization is added.
 
 ### The Underlying Assumption
 

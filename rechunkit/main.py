@@ -47,7 +47,7 @@ def guess_chunk_shape(shape: Tuple[int, ...], itemsize: int, target_chunk_size: 
             raise TypeError('All values in the shape must be ints.')
 
         chunks = list(shape)
-        
+
         idx = 0
         while True:
             chunk_bytes = prod(chunks)*itemsize
@@ -62,12 +62,12 @@ def guess_chunk_shape(shape: Tuple[int, ...], itemsize: int, target_chunk_size: 
             current_dim = chunks[idx % ndims]
             search_val = (current_dim // 2) - 1
             pos = bisect(composite_numbers, search_val)
-            
+
             if pos == 0:
                 new_val = 1
             else:
                 new_val = composite_numbers[pos - 1]
-            
+
             chunks[idx % ndims] = new_val
             idx += 1
 
@@ -155,105 +155,7 @@ def calc_ideal_read_chunk_mem(ideal_read_chunk_shape, itemsize):
     return int(prod(ideal_read_chunk_shape) * itemsize)
 
 
-def _count_reads(shape, source_chunk_shape, target_chunk_shape, source_read_chunk_shape):
-    """
-    Count total source chunk reads for a given buffer shape without building the full plan.
-    Mirrors the _rechunk_plan logic exactly for accuracy.
-    """
-    ideal_read_chunk_shape = calc_ideal_read_chunk_shape(source_chunk_shape, target_chunk_shape)
-    chunk_start = tuple(0 for _ in range(len(shape)))
-    n_reads = 0
-
-    if source_read_chunk_shape == ideal_read_chunk_shape:
-        for read_chunk_grp in chunk_range(chunk_start, shape, source_read_chunk_shape):
-            grp_start = tuple(s.start for s in read_chunk_grp)
-            grp_stop = tuple(s.stop for s in read_chunk_grp)
-            for _ in chunk_range(grp_start, grp_stop, source_chunk_shape):
-                n_reads += 1
-    else:
-        written_chunks = set()
-        for write_chunk in chunk_range(chunk_start, shape, target_chunk_shape):
-            write_chunk_start = tuple(s.start for s in write_chunk)
-            if write_chunk_start not in written_chunks:
-                write_chunk_stop = tuple(s.stop for s in write_chunk)
-                read_chunk_start = tuple(rc * (wc // rc) for wc, rc in zip(write_chunk_start, source_chunk_shape))
-                read_chunk_stop = tuple(
-                    min(max(rcs + rc, wc), sh)
-                    for rcs, rc, wc, sh in zip(read_chunk_start, source_read_chunk_shape, write_chunk_stop, shape)
-                )
-
-                if all(stop - start <= rcs for start, stop, rcs in zip(read_chunk_start, read_chunk_stop, source_read_chunk_shape)):
-                    is_end_chunk = any(wc.stop == ts for wc, ts in zip(write_chunk, shape))
-                    for write_chunk1 in chunk_range(write_chunk_start, read_chunk_stop, target_chunk_shape, include_partial_chunks=is_end_chunk, clip_ends=False):
-                        write_chunk2 = tuple(slice(wc.start, min(wc.stop, s)) for wc, s in zip(write_chunk1, shape))
-                        if all(all((wc.stop - wcs <= src, wc.start < wc.stop)) for wcs, wc, src in zip(read_chunk_start, write_chunk2, source_read_chunk_shape)):
-                            write_chunk1_start = tuple(s.start for s in write_chunk2)
-                            if write_chunk1_start not in written_chunks:
-                                written_chunks.add(write_chunk1_start)
-
-                    for _ in chunk_range(read_chunk_start, read_chunk_stop, source_chunk_shape, True, False):
-                        n_reads += 1
-                else:
-                    written_chunks.add(write_chunk_start)
-                    for rc in chunk_range(read_chunk_start, read_chunk_stop, source_chunk_shape, True, False):
-                        if all(max(rc_s.start, wc_s.start) < min(rc_s.stop, wc_s.stop) for rc_s, wc_s in zip(rc, write_chunk)):
-                            n_reads += 1
-
-    return n_reads
-
-
-def _greedy_read_chunk_factors(source_chunk_shape, k_factors, capacity):
-    """
-    Greedy heuristic to find multiplier factors that fit in capacity and approximate
-    the aspect ratio of k_factors. Returns list of ints.
-    """
-    source_len = len(source_chunk_shape)
-    total_k = prod(k_factors)
-    scale = (capacity / total_k) ** (1.0 / source_len)
-
-    new_factors = [max(1, int(k * scale)) for k in k_factors]
-
-    while prod(new_factors) > capacity:
-        idx = max(range(source_len), key=lambda i: new_factors[i])
-        new_factors[idx] = max(1, new_factors[idx] - 1)
-
-    while True:
-        candidates = [i for i in range(source_len) if new_factors[i] < k_factors[i]]
-        if not candidates:
-            break
-        candidates.sort(key=lambda i: k_factors[i] / new_factors[i], reverse=True)
-
-        grew = False
-        curr_prod = prod(new_factors)
-        for idx in candidates:
-            if curr_prod * (new_factors[idx] + 1) // new_factors[idx] <= capacity:
-                new_factors[idx] += 1
-                grew = True
-                break
-        if not grew:
-            break
-
-    return new_factors
-
-
-def _trim_factors(new_factors, source_chunk_shape, target_chunk_shape):
-    """
-    Trim factors so they don't extend past the last target chunk they cover.
-    Returns a tuple of the final read chunk shape.
-    """
-    final_factors = []
-    for n, s, t in zip(new_factors, source_chunk_shape, target_chunk_shape):
-        m = (n * s) // t
-        if m == 0:
-            req_n = (t + s - 1) // s
-            final_factors.append(min(n, req_n))
-        else:
-            req_n = (m * t + s - 1) // s
-            final_factors.append(req_n)
-    return tuple(f * s for f, s in zip(final_factors, source_chunk_shape))
-
-
-def calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsize, max_mem, shape=None):
+def calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsize, max_mem):
     """
     Calculates the optimum read chunk shape given a maximum amount of available memory.
 
@@ -267,9 +169,6 @@ def calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsiz
         The byte length of the data type.
     max_mem: int
         The max allocated memory to perform the chunking operation in bytes.
-    shape: tuple of int or None
-        The full array shape. When provided, enables candidate search to find
-        the buffer shape with fewest source reads. When None, uses greedy heuristic only.
 
     Returns
     -------
@@ -293,121 +192,66 @@ def calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsiz
     if tot_ideal <= max_cells:
         return ideal_chunks
 
-    # Constrained: ideal doesn't fit. Find best multiple of source_chunk_shape.
+    # If ideal doesn't fit, we need to find a multiple of source_chunk_shape
+    # that fits in max_mem and approximates the aspect ratio of ideal_chunks.
+
+    # Calculate how many source chunks we can fit
     capacity = max_cells // tot_source
     if capacity < 1:
-        return source_chunk_shape
+        return source_chunk_shape # Should have been caught by tot_source >= max_cells
 
+    # Calculate the scaling factor for each dimension from source to ideal
+    # ideal_chunks[i] = k_i * source_chunk_shape[i]
     k_factors = [i // s for i, s in zip(ideal_chunks, source_chunk_shape)]
 
-    # Greedy baseline
-    greedy_factors = _greedy_read_chunk_factors(source_chunk_shape, k_factors, capacity)
-    greedy_shape = _trim_factors(greedy_factors, source_chunk_shape, target_chunk_shape)
+    # We want to find new factors n_i <= k_i such that prod(n_i) <= capacity
+    # To preserve aspect ratio, we want n_i proportional to k_i.
 
-    # If no shape provided, return greedy result (backward compatible)
-    if shape is None:
-        return greedy_shape
-
-    # Generate candidate shapes and pick the one with fewest reads.
-    # For small search spaces, exhaustively try all valid factor combinations.
-    # For large ones, use targeted heuristic candidates.
     total_k = prod(k_factors)
-    candidates = {greedy_shape}
+    scale = (capacity / total_k) ** (1.0 / source_len)
 
-    if total_k <= 500:
-        # Exhaustive search over all valid factor combinations
-        ranges = [range(1, k + 1) for k in k_factors]
-        for factors in itertools.product(*ranges):
-            if prod(factors) <= capacity:
-                candidates.add(_trim_factors(list(factors), source_chunk_shape, target_chunk_shape))
-    else:
-        # Heuristic candidates for large search spaces
+    new_factors = [max(1, int(k * scale)) for k in k_factors]
 
-        # Round each dim down to nearest multiple of target chunk
-        for dim in range(source_len):
-            factors = list(greedy_factors)
-            target_multiple = target_chunk_shape[dim] // source_chunk_shape[dim]
-            if target_multiple > 1 and factors[dim] > target_multiple:
-                factors[dim] = (factors[dim] // target_multiple) * target_multiple
-                if prod(factors) <= capacity:
-                    candidates.add(_trim_factors(factors, source_chunk_shape, target_chunk_shape))
+    # Refine new_factors to ensure prod(new_factors) <= capacity
+    while prod(new_factors) > capacity:
+        # Shrink the largest factor > 1
+        idx = max(range(source_len), key=lambda i: new_factors[i])
+        new_factors[idx] = max(1, new_factors[idx] - 1)
 
-        # Round each dim down to nearest multiple of LCM factor
-        for dim in range(source_len):
-            factors = list(greedy_factors)
-            lcm_k = k_factors[dim]
-            if lcm_k > 1 and factors[dim] > 1:
-                rounded = (factors[dim] // lcm_k) * lcm_k
-                if rounded >= 1:
-                    factors[dim] = rounded
-                    if prod(factors) <= capacity:
-                        candidates.add(_trim_factors(factors, source_chunk_shape, target_chunk_shape))
+    # Grow to fill remaining capacity
+    while True:
+        candidates = [i for i in range(source_len) if new_factors[i] < k_factors[i]]
+        if not candidates:
+             break
 
-        # Try ±1-2 around greedy factors per dimension
-        for dim in range(source_len):
-            for delta in (-2, -1, 1, 2):
-                factors = list(greedy_factors)
-                new_val = factors[dim] + delta
-                if 1 <= new_val <= k_factors[dim]:
-                    factors[dim] = new_val
-                    if prod(factors) <= capacity:
-                        candidates.add(_trim_factors(factors, source_chunk_shape, target_chunk_shape))
+        # Heuristic: Grow the one with largest (k/n) ratio (most compressed)
+        candidates.sort(key=lambda i: k_factors[i]/new_factors[i], reverse=True)
 
-        # For each pair of dims, try shifting capacity between them
-        if source_len >= 2:
-            for d1 in range(source_len):
-                for d2 in range(d1 + 1, source_len):
-                    for shrink in range(1, min(greedy_factors[d1], 4)):
-                        factors = list(greedy_factors)
-                        if factors[d1] - shrink >= 1:
-                            factors[d1] -= shrink
-                            curr = prod(factors)
-                            while curr * (factors[d2] + 1) // factors[d2] <= capacity and factors[d2] < k_factors[d2]:
-                                factors[d2] += 1
-                                curr = prod(factors)
-                            candidates.add(_trim_factors(factors, source_chunk_shape, target_chunk_shape))
-                    for shrink in range(1, min(greedy_factors[d2], 4)):
-                        factors = list(greedy_factors)
-                        if factors[d2] - shrink >= 1:
-                            factors[d2] -= shrink
-                            curr = prod(factors)
-                            while curr * (factors[d1] + 1) // factors[d1] <= capacity and factors[d1] < k_factors[d1]:
-                                factors[d1] += 1
-                                curr = prod(factors)
-                            candidates.add(_trim_factors(factors, source_chunk_shape, target_chunk_shape))
+        grew = False
+        curr_prod = prod(new_factors)
+        for idx in candidates:
+             if curr_prod * (new_factors[idx] + 1) // new_factors[idx] <= capacity:
+                 new_factors[idx] += 1
+                 grew = True
+                 break # Re-evaluate from top
 
-    # Filter: all candidates must fit in memory and be >= source_chunk_shape per dim
-    valid = []
-    for c in candidates:
-        if prod(c) <= max_cells and all(ci >= si for ci, si in zip(c, source_chunk_shape)):
-            valid.append(c)
+        if not grew:
+            break
 
-    if not valid:
-        return greedy_shape
+    # Trim waste: Reduce factors if they exceed what's needed for the target chunks covered
+    final_factors = []
+    for n, s, t in zip(new_factors, source_chunk_shape, target_chunk_shape):
+        m = (n * s) // t
+        if m == 0:
+            # Limit to covering 1 target chunk if possible
+            req_n = (t + s - 1) // s
+            final_factors.append(min(n, req_n))
+        else:
+            # Limit to covering m target chunks
+            req_n = (m * t + s - 1) // s
+            final_factors.append(req_n)
 
-    if len(valid) == 1:
-        return valid[0]
-
-    # Pre-filter by fast estimate to limit expensive _count_reads calls.
-    # Always include greedy_shape to guarantee no regression.
-    max_score = 8
-
-    if len(valid) <= max_score:
-        scored = valid
-    else:
-        def _fast_estimate(c):
-            n_groups = prod(ceil(s / r) for s, r in zip(shape, c))
-            chunks_per_group = prod(r // s for r, s in zip(c, source_chunk_shape))
-            return n_groups * chunks_per_group
-
-        valid.sort(key=_fast_estimate)
-        scored = list(valid[:max_score])
-        if greedy_shape not in scored:
-            scored.append(greedy_shape)
-
-    best_shape = min(scored, key=lambda c: _count_reads(shape, source_chunk_shape, target_chunk_shape, c))
-
-    return best_shape
+    return tuple(f * s for f, s in zip(final_factors, source_chunk_shape))
 
 
 def calc_n_chunks_per_read(source_chunk_shape, source_read_chunk_shape):
@@ -456,7 +300,7 @@ def calc_n_reads_simple(shape, source_chunk_shape, target_chunk_shape):
     return next(read_counter)
 
 
-def _rechunk_plan(shape, itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel=None, source_read_chunk_shape=None):
+def _rechunk_plan(shape, itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel=None):
     """
     Internal generator that yields rechunking plan entries. Each entry is a tuple:
         (group_type, read_chunks, write_chunks, group_start)
@@ -466,8 +310,7 @@ def _rechunk_plan(shape, itemsize, source_chunk_shape, target_chunk_shape, max_m
     - write_chunks: list of tuple-of-slices for target writes (in target coordinate space)
     - group_start: tuple of ints, reference point for buffer offset calculations
     """
-    if source_read_chunk_shape is None:
-        source_read_chunk_shape = calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsize, max_mem)
+    source_read_chunk_shape = calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsize, max_mem)
     ideal_read_chunk_shape = calc_ideal_read_chunk_shape(source_chunk_shape, target_chunk_shape)
 
     chunk_start = tuple(0 for i in range(len(shape)))
@@ -553,16 +396,9 @@ def calc_n_reads_rechunker(shape: Tuple[int, ...], itemsize: int,  source_chunk_
     tuple
         number of reads, number of writes
     """
-    if sel is None:
-        target_shape = shape
-    else:
-        target_shape = tuple(s.stop - s.start for s in sel)
-
-    source_read_chunk_shape = calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsize, max_mem, shape=target_shape)
-
     n_reads = 0
     n_writes = 0
-    for group_type, read_chunks, write_chunks, group_start in _rechunk_plan(shape, itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel, source_read_chunk_shape=source_read_chunk_shape):
+    for group_type, read_chunks, write_chunks, group_start in _rechunk_plan(shape, itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel):
         n_reads += len(read_chunks)
         n_writes += len(write_chunks)
     return n_reads, n_writes
@@ -599,16 +435,16 @@ def rechunker(source: Callable, shape: Tuple[int, ...], dtype: np.dtype, source_
     if not isinstance(itemsize, int):
         itemsize = dtype.itemsize
 
+    source_read_chunk_shape = calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsize, max_mem)
+    buffer_shape = tuple(max(s, t) for s, t in zip(source_read_chunk_shape, target_chunk_shape))
+    mem_arr1 = np.zeros(buffer_shape, dtype=dtype)
+
     if sel is None:
         chunk_read_offset = tuple(0 for i in range(len(shape)))
         target_shape = shape
     else:
         chunk_read_offset = tuple(s.start for s in sel)
         target_shape = tuple(s.stop - s.start for s in sel)
-
-    source_read_chunk_shape = calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsize, max_mem, shape=target_shape)
-    buffer_shape = tuple(max(s, t) for s, t in zip(source_read_chunk_shape, target_chunk_shape))
-    mem_arr1 = np.zeros(buffer_shape, dtype=dtype)
 
     # For canonical yield ordering: compute strides for C-order target chunk index
     n_chunks_per_dim = tuple(ceil(s / c) for s, c in zip(target_shape, target_chunk_shape))
@@ -622,7 +458,7 @@ def rechunker(source: Callable, shape: Tuple[int, ...], dtype: np.dtype, source_
     pending = {}
     next_idx = 0
 
-    for group_type, read_chunks, write_chunks, group_start in _rechunk_plan(shape, itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel, source_read_chunk_shape=source_read_chunk_shape):
+    for group_type, read_chunks, write_chunks, group_start in _rechunk_plan(shape, itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel):
         if group_type == 'bulk':
             for read_chunk in read_chunks:
                 read_chunk1 = tuple(slice(rc.start + cro, min(rc.stop + cro, s)) for rc, cro, s in zip(read_chunk, chunk_read_offset, shape))
@@ -664,61 +500,3 @@ def rechunker(source: Callable, shape: Tuple[int, ...], dtype: np.dtype, source_
     while next_idx in pending:
         yield pending.pop(next_idx)
         next_idx += 1
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
