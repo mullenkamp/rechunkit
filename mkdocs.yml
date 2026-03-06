@@ -80,6 +80,7 @@ nav:
     - Concepts:
         - How It Works: concepts/how-it-works.md
         - Composite Numbers: concepts/composite-numbers.md
+        - Optimization Internals: concepts/optimization-internals.md
     - API Reference:
         - Overview: reference/index.md
         - rechunkit: reference/rechunkit.md

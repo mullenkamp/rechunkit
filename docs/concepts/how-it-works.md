@@ -44,6 +44,8 @@ When `max_mem` is too small for the LCM block, rechunkit uses the **constrained 
 
 Some source chunks may be read more than once, but the algorithm minimizes this. The more memory available, the fewer redundant reads.
 
+The choice of buffer shape within the memory budget affects how many redundant reads occur. rechunkit uses a greedy heuristic to pick a good buffer shape — see [Optimization Internals](optimization-internals.md) for details on why more sophisticated approaches were explored and ultimately rejected.
+
 ## Memory vs. Reads
 
 The relationship between `max_mem` and read count is monotonic — more memory always means fewer or equal reads:

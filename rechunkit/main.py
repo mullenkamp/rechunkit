@@ -47,7 +47,7 @@ def guess_chunk_shape(shape: Tuple[int, ...], itemsize: int, target_chunk_size: 
             raise TypeError('All values in the shape must be ints.')
 
         chunks = list(shape)
-        
+
         idx = 0
         while True:
             chunk_bytes = prod(chunks)*itemsize
@@ -62,12 +62,12 @@ def guess_chunk_shape(shape: Tuple[int, ...], itemsize: int, target_chunk_size: 
             current_dim = chunks[idx % ndims]
             search_val = (current_dim // 2) - 1
             pos = bisect(composite_numbers, search_val)
-            
+
             if pos == 0:
                 new_val = 1
             else:
                 new_val = composite_numbers[pos - 1]
-            
+
             chunks[idx % ndims] = new_val
             idx += 1
 
@@ -194,24 +194,24 @@ def calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsiz
 
     # If ideal doesn't fit, we need to find a multiple of source_chunk_shape
     # that fits in max_mem and approximates the aspect ratio of ideal_chunks.
-    
+
     # Calculate how many source chunks we can fit
     capacity = max_cells // tot_source
     if capacity < 1:
         return source_chunk_shape # Should have been caught by tot_source >= max_cells
-    
+
     # Calculate the scaling factor for each dimension from source to ideal
     # ideal_chunks[i] = k_i * source_chunk_shape[i]
     k_factors = [i // s for i, s in zip(ideal_chunks, source_chunk_shape)]
-    
+
     # We want to find new factors n_i <= k_i such that prod(n_i) <= capacity
     # To preserve aspect ratio, we want n_i proportional to k_i.
-    
+
     total_k = prod(k_factors)
     scale = (capacity / total_k) ** (1.0 / source_len)
-    
+
     new_factors = [max(1, int(k * scale)) for k in k_factors]
-    
+
     # Refine new_factors to ensure prod(new_factors) <= capacity
     while prod(new_factors) > capacity:
         # Shrink the largest factor > 1
@@ -223,10 +223,10 @@ def calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsiz
         candidates = [i for i in range(source_len) if new_factors[i] < k_factors[i]]
         if not candidates:
              break
-             
+
         # Heuristic: Grow the one with largest (k/n) ratio (most compressed)
         candidates.sort(key=lambda i: k_factors[i]/new_factors[i], reverse=True)
-        
+
         grew = False
         curr_prod = prod(new_factors)
         for idx in candidates:
@@ -234,7 +234,7 @@ def calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsiz
                  new_factors[idx] += 1
                  grew = True
                  break # Re-evaluate from top
-        
+
         if not grew:
             break
 
@@ -500,61 +500,3 @@ def rechunker(source: Callable, shape: Tuple[int, ...], dtype: np.dtype, source_
     while next_idx in pending:
         yield pending.pop(next_idx)
         next_idx += 1
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

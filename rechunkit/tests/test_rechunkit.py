@@ -409,3 +409,5 @@ def test_canonical_yield_order_with_selection():
 
         assert actual == canonical, f"shape={shp} sel={sel}: yield order not canonical"
 
+
+
