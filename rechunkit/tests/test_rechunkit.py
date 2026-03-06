@@ -354,3 +354,58 @@ def test_calc_n_chunks_1d():
     assert calc_n_chunks((100,), (10,)) == 10
     assert calc_n_chunks((101,), (10,)) == 11
 
+
+###################################################
+### Canonical yield order
+
+def test_canonical_yield_order():
+    """Target chunks must be yielded in chunk_range canonical (C-order) order."""
+    configs = [
+        # Ideal path, non-canonical before fix
+        ((20, 20), (6, 4), (4, 6), 2000),
+        ((24, 24), (6, 4), (4, 6), 2000),
+        ((31, 31, 31), (5, 2, 4), (4, 5, 3), 20000),
+        # Constrained path with bulk grouping, non-canonical before fix
+        ((31, 31), (5, 2), (2, 5), 120),
+        # Already canonical cases (must not regress)
+        ((100,), (7,), (11,), 5000),
+        ((100,), (7,), (11,), 100),
+        ((20, 20), (5, 5), (5, 5), 2000),
+        ((24, 24), (4, 4), (12, 12), 2000),
+    ]
+    dt = np.dtype('int32')
+
+    for shp, src_c, tgt_c, mem in configs:
+        src_arr = np.arange(1, prod(shp) + 1, dtype=dt).reshape(shp)
+
+        chunk_start = tuple(0 for _ in range(len(shp)))
+        canonical = [tuple(s.start for s in c) for c in chunk_range(chunk_start, shp, tgt_c)]
+
+        actual = []
+        for write_chunk, data in rechunker(src_arr.__getitem__, shp, dt, src_c, tgt_c, mem):
+            actual.append(tuple(s.start for s in write_chunk))
+
+        assert actual == canonical, f"shape={shp} src={src_c} tgt={tgt_c} mem={mem}: yield order not canonical"
+
+
+def test_canonical_yield_order_with_selection():
+    """Canonical order must hold when a selection is applied."""
+    configs = [
+        ((100, 100), (6, 4), (4, 6), 2000, (slice(10, 80), slice(5, 90))),
+        ((31, 31, 31), (5, 2, 4), (4, 5, 3), 500, (slice(3, 21), slice(11, 27), slice(7, 17))),
+    ]
+    dt = np.dtype('int32')
+
+    for shp, src_c, tgt_c, mem, sel in configs:
+        src_arr = np.arange(1, prod(shp) + 1, dtype=dt).reshape(shp)
+        tgt_shape = tuple(s.stop - s.start for s in sel)
+
+        chunk_start = tuple(0 for _ in range(len(shp)))
+        canonical = [tuple(s.start for s in c) for c in chunk_range(chunk_start, tgt_shape, tgt_c)]
+
+        actual = []
+        for write_chunk, data in rechunker(src_arr.__getitem__, shp, dt, src_c, tgt_c, mem, sel):
+            actual.append(tuple(s.start for s in write_chunk))
+
+        assert actual == canonical, f"shape={shp} sel={sel}: yield order not canonical"
+
