@@ -25,6 +25,7 @@ Rechunkit is a Python library for efficiently rechunking multidimensional numpy 
 - **Memory-Aware Optimization:** Employs a smart scaling algorithm to maximize performance within a user-defined memory limit (`max_mem`).
 - **LCM Minimization:** Utilizes highly composite numbers for chunk guessing to minimize the Least Common Multiple (LCM) between source and target, significantly reducing redundant reads.
 - **Flexible Data Access:** Supports subset selection (`sel`) and works with any source that implements a numpy `__getitem__` style callable (method or function).
+- **Source-Aligned Selection Reads:** When rechunking a subset (`sel`), read requests are aligned to source chunk boundaries -- even when the selection offset doesn't fall on a chunk boundary. This allows source functions backed by chunk-based storage (HDF5, Zarr, cfdb) to serve each read from aligned chunks without needing to assemble across boundaries.
 - **Preprocessing Utilities:** Includes tools for estimating ideal chunk shapes, calculating memory requirements, and predicting the number of required read operations.
 
 ## Installation

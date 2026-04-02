@@ -300,6 +300,20 @@ def calc_n_reads_simple(shape, source_chunk_shape, target_chunk_shape):
     return next(read_counter)
 
 
+def _exact_chunk_range(start, stop, step, clip_ends=True):
+    """
+    Like chunk_range but starts exactly at `start` without floor-aligning.
+    This is needed when the start position is phase-shifted to align reads
+    with source chunk boundaries in source coordinate space.
+    """
+    dim_ranges = [range(s, e, c) for s, e, c in zip(start, stop, step)]
+    for indices in itertools.product(*dim_ranges):
+        yield tuple(
+            slice(i, (min(i + c, e) if clip_ends else i + c))
+            for i, c, e in zip(indices, step, stop)
+        )
+
+
 def _rechunk_plan(shape, itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel=None):
     """
     Internal generator that yields rechunking plan entries. Each entry is a tuple:
@@ -317,6 +331,7 @@ def _rechunk_plan(shape, itemsize, source_chunk_shape, target_chunk_shape, max_m
 
     if sel is None:
         target_shape = shape
+        phase = tuple(0 for _ in range(len(shape)))
     else:
         for s, sh in zip(sel, shape):
             if s.start < 0 or s.stop > sh:
@@ -324,15 +339,26 @@ def _rechunk_plan(shape, itemsize, source_chunk_shape, target_chunk_shape, max_m
             if s.step is not None and s.step != 1:
                 raise ValueError('The selection slices must have a step of 1 or None.')
         target_shape = tuple(s.stop - s.start for s in sel)
+        phase = tuple(s.start % sc for s, sc in zip(sel, source_chunk_shape))
 
     if source_read_chunk_shape == ideal_read_chunk_shape:
         ## Ideal case: read chunks fill the buffer exactly, each source chunk is read once
+        # Keep groups at original positions but extend reads backward by phase
+        # to align with source chunk boundaries in source space.
+        # group_start is shifted back by phase so buffer offsets work correctly.
         for read_chunk_grp in chunk_range(chunk_start, target_shape, source_read_chunk_shape):
-            grp_start = tuple(s.start for s in read_chunk_grp)
+            grp_start_orig = tuple(s.start for s in read_chunk_grp)
             grp_stop = tuple(s.stop for s in read_chunk_grp)
 
-            read_chunks = list(chunk_range(grp_start, grp_stop, source_chunk_shape))
-            write_chunks = list(chunk_range(grp_start, grp_stop, target_chunk_shape))
+            # Shift group_start backward by phase for source-aligned reads
+            grp_start = tuple(gs - p for gs, p in zip(grp_start_orig, phase))
+
+            # Reads from phase-shifted start, aligned to source chunks
+            # Filter out reads entirely outside [0, target_shape)
+            read_chunks = [rc for rc in _exact_chunk_range(grp_start, grp_stop, source_chunk_shape)
+                           if all(s.stop > 0 for s in rc)]
+            # Write chunks at original positions (unchanged)
+            write_chunks = list(chunk_range(grp_start_orig, grp_stop, target_chunk_shape))
 
             yield ('bulk', read_chunks, write_chunks, grp_start)
 
@@ -345,10 +371,12 @@ def _rechunk_plan(shape, itemsize, source_chunk_shape, target_chunk_shape, max_m
             if write_chunk_start not in written_chunks:
                 write_chunk_stop = tuple(s.stop for s in write_chunk)
 
-                read_chunk_start = tuple(rc * (wc//rc) for wc, rc in zip(write_chunk_start, source_chunk_shape))
+                # Align read_chunk_start to source chunks in source space
+                read_chunk_start = tuple(sc * ((wc + p) // sc) - p for wc, sc, p in zip(write_chunk_start, source_chunk_shape, phase))
                 read_chunk_stop = tuple(min(max(rcs + rc, wc), sh) for rcs, rc, wc, sh in zip(read_chunk_start, source_read_chunk_shape, write_chunk_stop, target_shape))
 
-                read_chunks = list(chunk_range(read_chunk_start, read_chunk_stop, source_chunk_shape, True, False))
+                read_chunks = [rc for rc in _exact_chunk_range(read_chunk_start, read_chunk_stop, source_chunk_shape, clip_ends=False)
+                               if all(s.stop > 0 for s in rc)]
 
                 if all(stop - start <= rcs for start, stop, rcs in zip(read_chunk_start, read_chunk_stop, source_read_chunk_shape)):
                     ## Bulk: read region fits in buffer, can serve multiple write chunks
@@ -436,15 +464,20 @@ def rechunker(source: Callable, shape: Tuple[int, ...], dtype: np.dtype, source_
         itemsize = dtype.itemsize
 
     source_read_chunk_shape = calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsize, max_mem)
-    buffer_shape = tuple(max(s, t) for s, t in zip(source_read_chunk_shape, target_chunk_shape))
-    mem_arr1 = np.zeros(buffer_shape, dtype=dtype)
 
     if sel is None:
         chunk_read_offset = tuple(0 for i in range(len(shape)))
         target_shape = shape
+        phase = tuple(0 for _ in range(len(shape)))
     else:
         chunk_read_offset = tuple(s.start for s in sel)
         target_shape = tuple(s.stop - s.start for s in sel)
+        phase = tuple(s.start % sc for s, sc in zip(sel, source_chunk_shape))
+
+    # Buffer must accommodate source_read_chunk_shape + phase to hold
+    # phase-shifted reads that extend before the group's original start
+    buffer_shape = tuple(max(s + p, t) for s, t, p in zip(source_read_chunk_shape, target_chunk_shape, phase))
+    mem_arr1 = np.zeros(buffer_shape, dtype=dtype)
 
     # For canonical yield ordering: compute strides for C-order target chunk index
     n_chunks_per_dim = tuple(ceil(s / c) for s, c in zip(target_shape, target_chunk_shape))
