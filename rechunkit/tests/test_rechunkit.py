@@ -410,4 +410,80 @@ def test_canonical_yield_order_with_selection():
         assert actual == canonical, f"shape={shp} sel={sel}: yield order not canonical"
 
 
+###################################################
+### Source-alignment verification
+
+
+def test_source_reads_are_chunk_aligned():
+    """Every source() call must receive slices aligned to source_chunk_shape."""
+    configs = [
+        # Non-aligned 1D
+        ((100,), (7,), (11,), 500, (slice(10, 80),)),
+        ((100,), (20,), (15,), 2000, (slice(10, 70),)),
+        # Non-aligned 2D
+        ((31, 31), (5, 2), (2, 5), 200, (slice(3, 21), slice(1, 27))),
+        # Non-aligned 3D
+        ((31, 31, 31), (5, 2, 4), (4, 5, 3), 2000, (slice(3, 21), slice(11, 27), slice(7, 17))),
+        # Aligned selection (should still work)
+        ((100,), (10,), (15,), 500, (slice(20, 80),)),
+        # Non-aligned with tiny memory (constrained path)
+        ((50,), (7,), (11,), 50, (slice(3, 45),)),
+        # Non-aligned 2D constrained
+        ((31, 31), (5, 2), (2, 5), 50, (slice(3, 21), slice(1, 27))),
+    ]
+    dt = np.dtype('int32')
+
+    for shp, src_c, tgt_c, mem, sel in configs:
+        src_arr = np.arange(1, prod(shp) + 1, dtype=dt).reshape(shp)
+        calls = []
+
+        def tracking_source(slices, _arr=src_arr, _calls=calls):
+            _calls.append(slices)
+            return _arr[slices]
+
+        target = np.zeros(tuple(s.stop - s.start for s in sel), dtype=dt)
+        for write_chunk, data in rechunker(tracking_source, shp, dt, src_c, tgt_c, mem, sel):
+            target[write_chunk] = data
+
+        # Verify correctness
+        assert np.all(src_arr[sel] == target), f"Data mismatch: shape={shp} sel={sel}"
+
+        # Verify alignment: every source call's start must be aligned to source_chunk_shape
+        for call_slices in calls:
+            for s, sc in zip(call_slices, src_c):
+                assert s.start % sc == 0, (
+                    f"Misaligned read: {call_slices} not aligned to {src_c}, "
+                    f"shape={shp} sel={sel} mem={mem}"
+                )
+
+
+def test_aligned_selection_no_double_reads_ideal():
+    """With ideal memory and aligned selection, no source chunk is read twice."""
+    configs = [
+        ((100,), (10,), (15,), (slice(20, 80),)),
+        ((24, 24), (6, 4), (4, 6), (slice(0, 12), slice(4, 24))),
+    ]
+    dt = np.dtype('int32')
+
+    for shp, src_c, tgt_c, sel in configs:
+        itemsize = dt.itemsize
+        ideal_mem = calc_ideal_read_chunk_mem(calc_ideal_read_chunk_shape(src_c, tgt_c), itemsize)
+
+        src_arr = np.arange(1, prod(shp) + 1, dtype=dt).reshape(shp)
+        calls = []
+
+        def tracking_source(slices, _arr=src_arr, _calls=calls):
+            _calls.append(slices)
+            return _arr[slices]
+
+        target = np.zeros(tuple(s.stop - s.start for s in sel), dtype=dt)
+        for write_chunk, data in rechunker(tracking_source, shp, dt, src_c, tgt_c, ideal_mem, sel):
+            target[write_chunk] = data
+
+        assert np.all(src_arr[sel] == target)
+
+        read_keys = [tuple(s.start for s in call) for call in calls]
+        assert len(read_keys) == len(set(read_keys)), (
+            f"Aligned selection has duplicate reads: shape={shp} sel={sel}"
+        )
 
