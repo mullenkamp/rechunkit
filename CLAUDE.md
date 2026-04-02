@@ -36,6 +36,8 @@ The entire library lives in a single module: `rechunkit/main.py`. The public API
 - **Ideal path:** When the LCM of source/target chunk shapes fits in `max_mem`, reads each source chunk exactly once. Uses `chunk_range` to iterate over read groups, then yields target chunks from in-memory buffer.
 - **Constrained path:** When memory is insufficient for ideal chunks, `calc_source_read_chunk_shape()` computes a reduced read chunk. The algorithm then performs smart partial reads, tracking already-written chunks via a set to avoid duplicates. Some source chunks may be read multiple times.
 
+**Selection alignment via phase shifting:** When `sel` is provided, `_rechunk_plan()` computes `phase = sel.start % source_chunk_shape` per dimension. Read groups are extended backward by this phase so that reads, after being shifted by the selection offset in `rechunker()`, land on source chunk boundaries. This ensures source functions backed by chunk-based storage always receive aligned reads. The buffer is increased by `phase` to accommodate the extra pre-selection data. `_exact_chunk_range()` is used instead of `chunk_range()` to avoid floor-alignment issues with negative start positions. When `sel` is `None` or chunk-aligned, phase is zero and behavior is identical to the un-shifted case.
+
 **Canonical yield order:** `rechunker()` always yields target chunks in C-order (row-major) based only on `target_chunk_shape` and the target shape, independent of source chunk layout or `max_mem`. A reordering buffer with direct-yield optimization ensures this without increasing read counts.
 
 **Key data flow:** `source` is a callable that accepts a tuple of slices and returns an ndarray. `rechunker()` is a generator yielding `(target_slices, data)` tuples.
