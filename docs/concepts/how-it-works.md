@@ -46,6 +46,20 @@ Some source chunks may be read more than once, but the algorithm minimizes this.
 
 The choice of buffer shape within the memory budget affects how many redundant reads occur. rechunkit uses a greedy heuristic to pick a good buffer shape — see [Optimization Internals](optimization-internals.md) for details on why more sophisticated approaches were explored and ultimately rejected.
 
+## Consuming the generator: yielded arrays are ephemeral
+
+The arrays yielded by `rechunker()` may be **views into the internal buffer**, which is reused as iteration advances. Two rules follow:
+
+1. **Consume or copy each yielded array before advancing the generator.** Holding references across iterations (e.g. `list(rechunker(...))`) leaves some arrays pointing at overwritten buffer memory — silently wrong data. Whether a given chunk happens to be a view or a copy depends on plan internals you cannot see, so never rely on it.
+2. **Treat yielded arrays as read-only.** Mutating one in place can corrupt data yielded later.
+
+The supported pattern is to process (write out, aggregate, or `.copy()`) each chunk inside the loop body:
+
+```python
+for write_slices, data in rechunker(source, shape, dtype, src_cs, tgt_cs, max_mem):
+    target[write_slices] = data          # consumed immediately — safe
+```
+
 ## Memory vs. Reads
 
 The relationship between `max_mem` and read count is monotonic — more memory always means fewer or equal reads:

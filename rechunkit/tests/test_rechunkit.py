@@ -332,6 +332,30 @@ def test_guess_chunk_shape_0dim():
     assert guess_chunk_shape((), 4) == ()
 
 
+def test_guess_chunk_shape_zero_dim_raises():
+    """A zero-length dim can never produce a valid chunk shape."""
+    with pytest.raises(ValueError, match='> 0'):
+        guess_chunk_shape((0,), 4)
+    with pytest.raises(ValueError, match='> 0'):
+        guess_chunk_shape((0, 100), 8)
+    with pytest.raises(ValueError, match='> 0'):
+        guess_chunk_shape((100, -1), 8)
+
+
+def test_guess_chunk_shape_numpy_ints():
+    """numpy integer shape values must be accepted and produce plain-int output."""
+    shape = (np.int64(1000000), np.int32(500))
+    cs = guess_chunk_shape(shape, 8)
+    assert cs == guess_chunk_shape((1000000, 500), 8)
+    assert all(type(c) is int for c in cs)
+
+
+def test_guess_chunk_shape_non_int_raises():
+    """Non-integer shape values are still rejected."""
+    with pytest.raises(TypeError):
+        guess_chunk_shape((100.0, 100), 4)
+
+
 ###################################################
 ### chunk_range edge cases
 

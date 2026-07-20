@@ -40,6 +40,10 @@ The entire library lives in a single module: `rechunkit/main.py`. The public API
 
 **Canonical yield order:** `rechunker()` always yields target chunks in C-order (row-major) based only on `target_chunk_shape` and the target shape, independent of source chunk layout or `max_mem`. A reordering buffer with direct-yield optimization ensures this without increasing read counts.
 
+**Yield lifetime contract:** direct-yield chunks are VIEWS into the internal buffer (reused as iteration advances); reorder-path chunks are copies. Consumers must consume or `.copy()` each yielded array before advancing the generator and treat yields as read-only — documented in the `rechunker()` docstring and `docs/concepts/how-it-works.md`; keep those in sync with any buffer-handling change.
+
+**Input validation:** `guess_chunk_shape` accepts numpy integers, rejects dims <= 0 (a zero chunk dim is never valid output), and still returns `()` for the empty shape — pinned by tests.
+
 **Key data flow:** `source` is a callable that accepts a tuple of slices and returns an ndarray. `rechunker()` is a generator yielding `(target_slices, data)` tuples.
 
 **Composite numbers table** (`composite_numbers` at module top): Pre-computed highly composite numbers used by `guess_chunk_shape()` to pick chunk dimensions that produce small LCMs.

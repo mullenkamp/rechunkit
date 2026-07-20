@@ -43,10 +43,13 @@ def guess_chunk_shape(shape: Tuple[int, ...], itemsize: int, target_chunk_size: 
 
     if ndims > 0:
 
-        if not all(isinstance(v, int) for v in shape):
+        if not all(isinstance(v, (int, np.integer)) for v in shape):
             raise TypeError('All values in the shape must be ints.')
 
-        chunks = list(shape)
+        if any(v <= 0 for v in shape):
+            raise ValueError('All values in the shape must be > 0. A chunk shape cannot have a zero-length dim.')
+
+        chunks = [int(v) for v in shape]
 
         idx = 0
         while True:
@@ -276,8 +279,6 @@ def calc_n_reads_simple(shape, source_chunk_shape, target_chunk_shape):
     ----------
     shape: tuple of ints
         The shape of the source dataset, which will also be the shape of the target dataset.
-    dtype: np.dtype
-        The numpy data type of the source/target.
     source_chunk_shape: tuple of ints
         The chunk_shape of the source.
     target_chunk_shape: tuple of ints
@@ -459,6 +460,14 @@ def rechunker(source: Callable, shape: Tuple[int, ...], dtype: np.dtype, source_
     -------
     Generator
         tuple of the target slices to the np.ndarray of data
+
+    Notes
+    -----
+    Yielded arrays may be views into the generator's internal buffer, which is
+    reused as iteration advances. Consume (or ``.copy()``) each yielded array
+    BEFORE advancing the generator, and treat yielded arrays as read-only —
+    holding references across iterations or mutating them in place produces
+    silently wrong data.
     """
     if not isinstance(itemsize, int):
         itemsize = dtype.itemsize
