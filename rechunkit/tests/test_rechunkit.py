@@ -47,13 +47,29 @@ def test_calcs():
 
     n_reads_simple = calc_n_reads_simple(source_shape, source_chunk_shape, target_chunk_shape)
 
+    # At the tiny module budget (2 KB) the honest memory contract (buffer +
+    # pending copies) leaves no batching headroom for this config, so reads
+    # may reach — but never exceed — the brute-force count.
     n_reads, n_writes = calc_n_reads_rechunker(source_shape, dtype.itemsize, source_chunk_shape, target_chunk_shape, max_mem)
 
-    assert n_reads < n_reads_simple and n_writes == n_chunks_target
+    assert n_reads <= n_reads_simple and n_writes == n_chunks_target
 
-    n_reads_sel, n_writes_sel = calc_n_reads_rechunker(source_shape, dtype.itemsize, source_chunk_shape, target_chunk_shape, max_mem, sel)
+    # At a moderate budget that is still constrained under the honest
+    # contract (ideal buffer + its pending band exceed it), the optimized
+    # plan must beat brute force.
+    from rechunkit.main import _pending_bytes
 
-    assert n_reads_sel < n_reads and n_writes_sel < n_chunks_target
+    ideal = calc_ideal_read_chunk_shape(source_chunk_shape, target_chunk_shape, source_shape)
+    ideal_honest = (calc_ideal_read_chunk_mem(ideal, dtype.itemsize)
+                    + _pending_bytes(ideal, source_shape, target_chunk_shape, dtype.itemsize))
+    mid_mem = 30000
+    assert ideal_honest > mid_mem
+    n_reads_mid, n_writes_mid = calc_n_reads_rechunker(source_shape, dtype.itemsize, source_chunk_shape, target_chunk_shape, mid_mem)
+    assert n_reads_mid < n_reads_simple and n_writes_mid == n_chunks_target
+
+    n_reads_sel, n_writes_sel = calc_n_reads_rechunker(source_shape, dtype.itemsize, source_chunk_shape, target_chunk_shape, mid_mem, sel)
+
+    assert n_reads_sel < n_reads_mid and n_writes_sel < n_chunks_target
 
 
 def test_rechunking_same_shape():
@@ -193,12 +209,19 @@ def test_rechunk_int8():
 ### Read count optimality tests
 
 def test_ideal_mem_reads_equal_source_chunks():
-    """With ideal memory, each source chunk is read exactly once."""
+    """With ideal memory, each source chunk is read exactly once.
+
+    max_mem is an honest TOTAL (buffer + canonical-order pending copies), so
+    "ideal memory" must include the pending band the ideal path parks."""
+    from rechunkit.main import _pending_bytes
+
     shape = (24, 24)
     src_c = (6, 4)
     tgt_c = (4, 6)
     itemsize = 4
-    ideal_mem = calc_ideal_read_chunk_mem(calc_ideal_read_chunk_shape(src_c, tgt_c), itemsize)
+    ideal = calc_ideal_read_chunk_shape(src_c, tgt_c, shape)
+    ideal_mem = (calc_ideal_read_chunk_mem(ideal, itemsize)
+                 + _pending_bytes(ideal, shape, tgt_c, itemsize))
 
     n_reads, n_writes = calc_n_reads_rechunker(shape, itemsize, src_c, tgt_c, ideal_mem)
     n_source_chunks = calc_n_chunks(shape, src_c)
@@ -490,8 +513,14 @@ def test_aligned_selection_no_double_reads_ideal():
     dt = np.dtype('int32')
 
     for shp, src_c, tgt_c, sel in configs:
+        from rechunkit.main import _pending_bytes
+
         itemsize = dt.itemsize
-        ideal_mem = calc_ideal_read_chunk_mem(calc_ideal_read_chunk_shape(src_c, tgt_c), itemsize)
+        tgt_shape = tuple(s.stop - s.start for s in sel)
+        ideal = calc_ideal_read_chunk_shape(src_c, tgt_c, tgt_shape)
+        # honest budget: ideal buffer + the pending band the ideal path parks
+        ideal_mem = (calc_ideal_read_chunk_mem(ideal, itemsize)
+                     + _pending_bytes(ideal, tgt_shape, tgt_c, itemsize))
 
         src_arr = np.arange(1, prod(shp) + 1, dtype=dt).reshape(shp)
         calls = []

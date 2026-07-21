@@ -42,9 +42,11 @@ When `max_mem` is too small for the LCM block, rechunkit uses the **constrained 
 3. For each target chunk, read the overlapping source chunks into the buffer
 4. When the buffer covers multiple target chunks, yield them all to avoid redundant reads later
 
-Some source chunks may be read more than once, but the algorithm minimizes this. The more memory available, the fewer redundant reads.
+Some source chunks may be read more than once, but the algorithm minimizes this. More memory *generally* means fewer redundant reads (see "Memory vs. Reads" below for the precise statement).
 
-The choice of buffer shape within the memory budget affects how many redundant reads occur. rechunkit uses a greedy heuristic to pick a good buffer shape — see [Optimization Internals](optimization-internals.md) for details on why more sophisticated approaches were explored and ultimately rejected.
+When a target chunk's read region exceeds the buffer, the write chunks are handled by the **batched single path**: consecutive target chunks are collected into batches (as many as the memory budget allows), their overlapping source reads are deduplicated, and each source chunk is read once per batch and scattered into per-target-chunk buffers.
+
+The choice of buffer shape within the memory budget affects how many redundant reads occur. rechunkit uses a greedy heuristic plus a small **candidate check** (the greedy shape, a target-aligned snap, a half-budget greedy, and one source chunk are scored by running the planner itself; the fewest-reads shape wins) — see [Optimization Internals](optimization-internals.md) for the history and the 2026-07 revisit.
 
 ## Consuming the generator: yielded arrays are ephemeral
 
@@ -62,15 +64,17 @@ for write_slices, data in rechunker(source, shape, dtype, src_cs, tgt_cs, max_me
 
 ## Memory vs. Reads
 
-The relationship between `max_mem` and read count is monotonic — more memory always means fewer or equal reads:
+Read count *generally* decreases as `max_mem` grows, but it is **not guaranteed monotone**: read shapes are discrete multiples of the source chunks and the planner switches between regimes (ideal / constrained-bulk / batched) at thresholds, so a larger budget can occasionally cost a few percent more reads. The candidate check suppresses the worst cases (a pinned regression sweep caps observed jumps at well under 2x), but no formal guarantee exists.
 
 | Buffer size | Reads per source chunk | Path |
 |-------------|----------------------|------|
-| ≥ LCM block | Exactly 1 | Ideal |
+| ≥ LCM block (clipped to the array extent) | Exactly 1 | Ideal |
 | Between source and LCM | 1–N (depends on alignment) | Constrained |
-| ≈ Source chunk | Maximum redundancy | Constrained |
+| ≈ Source chunk | Once per batch of target chunks | Batched single |
 
-You can use `calc_n_reads_rechunker` to find the exact read count for any memory budget before running the rechunker.
+`max_mem` is an honest TOTAL: it bounds the read buffer plus the canonical-order pending copies plus the batch buffers. The exceptions are the irreducible floors (you cannot read less than one source chunk nor materialize less than one target chunk) and the wide-array residual: when a single source chunk spans multiple target-chunk rows on a wide array, the pending band `(ceil(src0/tgt0) - 1) x row_width x itemsize` is physically unavoidable without re-reading every source row band per target row — rechunkit holds the band rather than multiply the reads.
+
+You can use `calc_n_reads_rechunker` to find the exact read count for any memory budget before running the rechunker. Note that for constrained plans under ~20,000 target chunks it runs the candidate check (a few extra planning passes); planning stays proportional to the target chunk count.
 
 ## Performance Benchmarks
 
