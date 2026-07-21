@@ -1,0 +1,63 @@
+{
+ "rechunk_ideal": {
+  "median_s": 0.06083592999493703,
+  "cells_per_s": 1578014834.4570296,
+  "peak_mem_mb": 1.4920730590820312,
+  "max_mem_mb": 1024.0
+ },
+ "rechunk_constrained": {
+  "median_s": 0.11269314505625516,
+  "cells_per_s": 851870803.2514123,
+  "peak_mem_mb": 1.4893569946289062,
+  "max_mem_mb": 0.5
+ },
+ "rechunk_sel_phase": {
+  "median_s": 0.07914512098068371,
+  "cells_per_s": 1143216396.3977349,
+  "peak_mem_mb": 1.8738632202148438,
+  "max_mem_mb": 1024.0
+ },
+ "rechunk_identity_sel": {
+  "median_s": 0.10012006701435894,
+  "cells_per_s": 841389768.4259294,
+  "peak_mem_mb": 1.1495361328125,
+  "max_mem_mb": 1024.0
+ },
+ "plan_only_large": {
+  "median_s": 0.04324833396822214
+ },
+ "plan_only_small_constrained": {
+  "median_s": 0.04523777199210599
+ },
+ "guess_chunk_shape_2000": {
+  "median_s": 0.056927332014311105
+ },
+ "groupby_amplification_tight": {
+  "source_calls": 8640,
+  "stored_chunks": 960,
+  "amplification": 9.0,
+  "max_mem_mb": 0.5
+ },
+ "groupby_amplification_mid": {
+  "source_calls": 8640,
+  "stored_chunks": 960,
+  "amplification": 9.0,
+  "max_mem_mb": 1.0
+ },
+ "pending_wide": {
+  "median_s": 0.019701227953191847,
+  "cells_per_s": 101516514.84627256,
+  "peak_mem_mb": 16.93486785888672,
+  "max_mem_mb": 0.0625,
+  "peak_over_budget": 270.9578857421875
+ },
+ "mixed_plan_peak": {
+  "median_s": 0.009135042957495898,
+  "cells_per_s": 21017963.560034655,
+  "peak_mem_mb": 0.22125244140625,
+  "max_mem_mb": 0.00390625,
+  "peak_over_budget": 56.640625,
+  "n_bulk": 640,
+  "n_single": 320
+ }
+}

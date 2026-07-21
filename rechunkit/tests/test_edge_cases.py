@@ -27,23 +27,28 @@ def test_rechunk_1d_parametrized(shape, src_chunks, tgt_chunks, selection):
         
     assert np.all(target == expected)
 
-@pytest.mark.parametrize("source_chunk_shape, target_chunk_shape, max_mem, expected_min_factor", [
-    ((1000, 1000), (1000, 1000), 500 * 4, (1, 1)), # mem < source chunk, returns source chunk
-    ((10, 10), (20, 20), 100 * 4, (1, 1)), # mem exactly fits one source chunk
-    ((1, 1), (1000000, 1000000), 100 * 4, (10, 10)), # huge LCM, small mem - test scaling efficiency
+@pytest.mark.parametrize("source_chunk_shape, target_chunk_shape, max_mem", [
+    ((1000, 1000), (1000, 1000), 500 * 4),   # mem < source chunk -> floor
+    ((10, 10), (20, 20), 100 * 4),           # floor dominated by target dims
+    ((1, 1), (1000000, 1000000), 100 * 4),   # huge LCM, small mem
 ])
-def test_scaling_logic_large_arrays(source_chunk_shape, target_chunk_shape, max_mem, expected_min_factor):
-    """Test calc_source_read_chunk_shape scaling logic for large/disparate chunks without large allocation."""
+def test_scaling_logic_large_arrays(source_chunk_shape, target_chunk_shape, max_mem):
+    """calc_source_read_chunk_shape budgets the TRUE buffer (per-dim
+    max(read+phase, target)); when even one source chunk busts the budget it
+    takes memory-free growth up to the target-forced buffer dims."""
     itemsize = 4
     res = calc_source_read_chunk_shape(source_chunk_shape, target_chunk_shape, itemsize, max_mem)
-    
+
     # Check that result is a multiple of source_chunk_shape
     for r, s in zip(res, source_chunk_shape):
         assert r % s == 0
-        
-    # Check that it fits in max_mem
-    assert prod(res) * itemsize <= max_mem or res == source_chunk_shape
-    
+
+    # The true buffer either fits the budget, or every dim stays within the
+    # extent the target chunk forces anyway (allocation-neutral floor).
+    true_buf = prod(max(r, t) for r, t in zip(res, target_chunk_shape)) * itemsize
+    floor_buf = prod(max(s, t) for s, t in zip(source_chunk_shape, target_chunk_shape)) * itemsize
+    assert true_buf <= max_mem or true_buf == floor_buf
+
     # For the huge LCM case, ensure it didn't hang and returned something sensible
     if source_chunk_shape == (1, 1):
         assert prod(res) > 1

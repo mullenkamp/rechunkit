@@ -119,7 +119,7 @@ The heuristic candidates for large search spaces are based on perturbations of t
 
 ### Monotonicity
 
-Any optimization must guarantee monotonicity (more memory = fewer or equal reads). The greedy heuristic currently maintains this empirically. The candidate search maintained it by always including the greedy shape as a fallback. A formal monotonicity proof would be valuable regardless of whether an optimization is added.
+Monotonicity (more memory = fewer or equal reads) turned out NOT to hold for the greedy heuristic — the 2026-07 review measured violations in ~13% of a randomized sweep, and the honest-budget accounting initially made them worse (see the revisit section below). The adopted candidate check reduces the violation count and severity empirically; a formal monotonicity guarantee still does not exist and would be valuable.
 
 ### The Underlying Assumption
 
@@ -130,3 +130,42 @@ The entire optimization assumes that minimizing source reads is the primary obje
 - **Write ordering:** The canonical yield order may interact with downstream write patterns in ways that affect performance.
 
 These factors are currently not modeled. A more complete optimization would consider total I/O cost rather than raw read count.
+
+## 2026-07 Revisit: The Narrow Candidate Check (Adopted)
+
+A dual-blind performance review (2026-07-20) reopened this question with new evidence
+the original exploration did not have: after the true-buffer/pending accounting landed,
+the greedy pick could be catastrophically wrong at regime boundaries — a pinned sweep
+found configs where DOUBLING the memory budget increased reads 11.5x (63 -> 723), far
+beyond the 1–4% gains the rejected search was judged against.
+
+A deliberately narrower version was adopted, addressing the original rejection reasons
+point by point:
+
+- **No `_count_reads` mirror to drift** (rejection reason 1): candidates are scored by
+  running `_rechunk_plan` itself in counting mode, with the candidate shape threaded in
+  as a parameter (`_read_chunk_shape` — a parameter, never a module-global, so
+  concurrent plans are safe). The scorer IS the executor.
+- **Bounded cost** (rejection reason 2): at most 5 deduplicated candidates — greedy,
+  a target-aligned snap, the half-budget greedy, the enforced ideal (when the pending
+  cascade degraded it), and one source chunk — and scoring is skipped entirely above
+  `_SCORE_LIMIT` (20,000) target chunks. Planning cost is a few extra plan passes,
+  proportional to target chunk count; plan-only calls on mid-size constrained configs
+  pay up to ~6.5x (measured 45 ms -> 294 ms on a 1,691-chunk case), which is invisible
+  against actual data movement.
+- **~60 lines**, not ~150 (rejection reason 4).
+- **The greedy shape is always in the set**, so no plan can be worse than pre-check
+  behavior (measured: scoring changes the shape in ~9% of constrained plan cells;
+  median 19% fewer reads when it does; zero cells worse).
+
+Two structural fixes landed alongside, discovered by dissecting sweep pathologies:
+bulk mode must be *affordable* (if the bulk buffer + its pending band leave room for
+fewer than two batch buffers, the plan goes all-multi — an n_batch=1 mixed plan cannot
+deduplicate reads and is strictly worse), and the pending-enforcement cascade only
+shrinks dims whose shrink strictly reduces buffer + pending (a shrink under a constant
+outer band term only degrades reads).
+
+Net effect on the pinned 1,500-config sweep: monotonicity violations 203 (pre-round)
+-> 104, worst violation 1.5x -> 1.67x (pre-fix worst during development: 11.5x), total
+reads 2.1% below the pre-round baseline. The monotonicity section above still holds:
+no formal guarantee exists, and the sweep is the empirical gate.

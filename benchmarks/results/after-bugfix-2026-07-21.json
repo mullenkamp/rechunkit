@@ -1,0 +1,32 @@
+{
+ "rechunk_ideal": {
+  "median_s": 0.004704296006821096,
+  "cells_per_s": 1275429945.5859432,
+  "peak_mem_mb": 0.7531356811523438,
+  "max_mem_mb": 1024.0
+ },
+ "rechunk_constrained": {
+  "median_s": 0.0038494390319101512,
+  "cells_per_s": 1558668665.8140697,
+  "peak_mem_mb": 0.7531356811523438,
+  "max_mem_mb": 1.0
+ },
+ "rechunk_sel_phase": {
+  "median_s": 0.005180584965273738,
+  "cells_per_s": 1063586455.3779895,
+  "peak_mem_mb": 0.99017333984375,
+  "max_mem_mb": 1024.0
+ },
+ "rechunk_identity_sel": {
+  "median_s": 0.00681451999116689,
+  "cells_per_s": 752804307.0751283,
+  "peak_mem_mb": 0.6354751586914062,
+  "max_mem_mb": 1024.0
+ },
+ "plan_only_large": {
+  "median_s": 0.010596789012197405
+ },
+ "guess_chunk_shape_500": {
+  "median_s": 0.003528999979607761
+ }
+}
